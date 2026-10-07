@@ -24,16 +24,20 @@ noflash = im2double(A);
 % no flash filtreras, men flash används som guide förkanter
 
 %Börjar testa med mindre bilderna
-flash_small = imresize(flash, 0.25);
-noflash_small = imresize(noflash, 0.25);
-% figure;
-% imshow(flash_small , [],'InitialMagnification', 'fit')
-% figure;
-% imshow(noflash_small , [],'InitialMagnification', 'fit')
+% flash_small = imresize(flash, 0.25);
+% noflash_small = imresize(noflash, 0.25);
 
+flash_small = flash; 
+noflash_small = noflash; 
 
-sigma_s = 8; %24 förut men det blev tungt 
-sigma_r = 0.4; %Intensitet
+figure;
+imshow(flash_small , [],'InitialMagnification', 'fit')
+figure;
+imshow(noflash_small , [],'InitialMagnification', 'fit')
+%%
+%s= 2 och r = 0.3 var bra!!!!!
+sigma_s = 5; el
+sigma_r = 0.3; %Intensitet
 
 filtered = zeros(size(noflash_small));
 
@@ -70,11 +74,9 @@ imshow(filtered, [],'InitialMagnification', 'fit');
 title("Joint bilateral filter");
 
 %% Specular/shadow masks (4.3)
-
-%Shadow mask------------------------------------
 %Approximately linearize för shadow!
-flash_linear = flash_small .^ 2.2;
-ambient_linear = noflash_small .^ 2.2;
+flash_linear = rgb2lin(flash_small);
+ambient_linear = rgb2lin(noflash_small);
 
 %Calculate luminance: 
 flash_lum = 0.2126 * flash_linear(:,:,1) + ...
@@ -85,15 +87,36 @@ ambient_lum = 0.2126 * ambient_linear(:,:,1) + ...
              0.7152 * ambient_linear(:,:,2) + ...
              0.0722 * ambient_linear(:,:,3);
 
-%Detect flash shadows
-shadow_threshold = 0.05;
-shadow_mask = abs(flash_lum - ambient_lum) <= shadow_threshold;
+%Ambient lum map: ------------------------------
+figure;
+whos ambient_lum
+imagesc(ambient_lum);
+axis image;
+colorbar;
+title("Ambient Illumination Map");
+
+%Difference map flash/no flash --------------------------------
+difference_map = flash_lum - ambient_lum;
+
+figure;
+imagesc(difference_map);
+axis image;
+colorbar;
+title("Flash vs No-Flash Difference Map");
+
+%Detect flash shadows--------------------------------
+%shadow_threshold = 0.05;
+%shadow_mask = abs(flash_lum - ambient_lum) <= shadow_threshold;
+
+%Ny typ av shadow mask, vad är skillnaden?
+shadow_threshold = -0.02;
+shadow_mask = difference_map < shadow_threshold;
 
 figure;
 imshow(shadow_mask, [],'InitialMagnification', 'fit');
 title("Initial Flash Shadow Mask");
 
-%Clean the mask: morphological operations
+%Clean the mask: morphological operations------------
 se = strel('disk', 3);
 
 shadow_mask = imopen(shadow_mask, se); %imopen removes small isolated regions/speckles
@@ -105,7 +128,7 @@ imshow(shadow_mask, [],'InitialMagnification', 'fit');
 title("Cleaned Flash Shadow Mask");
 
 
-%Specular mask-----------------------------------------------
+%% Specular mask-----------------------------------------------
 %Detect flash specularities
 % Luminance from original flash image for specularity detection
 
@@ -113,7 +136,21 @@ flash_lum_original = 0.2126 * flash_small(:,:,1) + ...
                      0.7152 * flash_small(:,:,2) + ...
                      0.0722 * flash_small(:,:,3);
 
-specular_mask = flash_lum >= 0.95;
+%pure flash/flash intesnsity:--------------------------------
+figure;
+imagesc(flash_lum_original);
+axis image;
+colorbar;
+title("Pure Flash / Flash Intensity Map");
+%% --------------------------------
+%specular_mask = flash_lum >= 0.70;
+
+flash_lum_srgb = 0.2126 * flash_small(:,:,1) + ...
+                 0.7152 * flash_small(:,:,2) + ...
+                 0.0722 * flash_small(:,:,3);
+
+specular_mask = flash_lum_srgb >= 0.60;
+
 figure;
 imshow(specular_mask,  [],'InitialMagnification', 'fit');
 title("Initial Flash Specular Mask");
@@ -128,15 +165,15 @@ figure;
 imshow(specular_mask,   [],'InitialMagnification', 'fit');
 title("Cleaned Flash Specular Mask");
 
-%Combine the two masks:------------------------------------------------
+%% Combine the two masks:------------------------------------------------
 M = shadow_mask | specular_mask;
 
 figure;
 imshow(M,   [],'InitialMagnification', 'fit');
 title("Combined Flash Artifact Mask");
 
-% Blurr the mask: 
-M = imgaussfilt(double(M), 5);
+% Blurr the mask:Final artifact mask 
+M = imgaussfilt(double(M), 1);
 %Now instead of just 0 or 1, the mask contains values between 0 and 1 around the boundaries.
 
 figure;
@@ -145,20 +182,26 @@ title("Final Feathered Mask");
 
 
 %% Detail trasnfer (4.2)
-d = 24; %SpatialSigma (σs)
-r = 0.05; %DegreeOfSmoothing (ungefär σr)
+d = 12; %SpatialSigma (σs)
+r = 0.01; 
 
-%Ratio: describes the relative local detail
+%Ratio: describes the relative local det ail
 epsilon = 0.02;
 
 flash_base = imbilatfilt(flash_small, r, d);
 
 flash_detail = (flash_small + epsilon) ./ (flash_base + epsilon);
 
-
+%Flash detail/quotent map:------------------------
+figure;
+imagesc(mean(flash_detail, 3));
+axis image;
+colorbar;
+title("Flash Detail / Quotient Map");
+%--------------------------------
 %Lägg på no-flash bilden: multiply
 % 3. Transfer flash detail to filtered ambient image
-detail_strength = 1.0;
+detail_strength = 1.75;
 
 transferred = filtered .*(1 + detail_strength * (flash_detail - 1));
 
@@ -170,3 +213,24 @@ result = min(max(result, 0), 1); % Keep values in valid range
 figure;
 imshow(result,[],'InitialMagnification', 'fit'); 
 title("Flash/no-flash with detail transfer");
+evaluate_image_quality(result); 
+
+% Kvalitetsmått: 
+function [b_score, n_score, p_score] = evaluate_image_quality(img)
+    % EVALUATE_IMAGE_QUALITY Beräknar BRISQUE, NIQE och PIQE samt skriver ut en rapport.
+    %   skriv: evaluate_image_quality(result); 
+ 
+
+    b_score = brisque(img); %statistik
+    n_score = niqe(img); %hur naturlig bild ser ut
+    p_score = piqe(img); %supervised, blockbaserade 
+
+    % Skriv ut ormaterat
+    fprintf('\n-----------------------------------------\n');
+    fprintf('  Quality Metric     |    score    \n');
+    fprintf('-----------------------------------------\n');
+    fprintf('  BRISQUE  |  %.2f                         \n', b_score);
+    fprintf('  NIQE     |  %.2f                         \n', n_score);
+    fprintf('  PIQE     |  %.2f                         \n', p_score);
+    fprintf('-----------------------------------------\n\n');
+end
