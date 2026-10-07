@@ -5,37 +5,38 @@
 % 4. Add masks and result
 %% Load images
 %No flash
-A = imread("./flashnoflash/puppets_01_noflash.tif");
+A = imread("puppets_noflash.tif");
 figure
-imshow(A, [],'InitialMagnification', 'fit')
+imshow(A(:,:,1:3), [],'InitialMagnification', 'fit')
 title("Input Image - Camera Flash off")
 
 %Flash
-G = imread("./flashnoflash/puppets_00_flash.tif");
+G = imread("puppets_flash.tif");
 figure
-imshow(G, [],'InitialMagnification', 'fit')
+imshow(G(:,:,1:3), [],'InitialMagnification', 'fit')
 title("Guidance Image - Camera Flash On")
 
 %0-255 till 0-1: 
-flash = im2double(G);
-noflash = im2double(A);
+flash = im2double(G(:,:,1:3));
+noflash = im2double(A(:,:,1:3));
 
 %% Denoising using joint bilateral av noflash
 % no flash filtreras, men flash används som guide förkanter
 
 %Börjar testa med mindre bilderna
-flash_small = imresize(flash, 0.25);
-noflash_small = imresize(noflash, 0.25);
+% flash = imresize(flash, 0.25);
+% noflash = imresize(noflash, 0.25);
+
 % figure;
-% imshow(flash_small , [],'InitialMagnification', 'fit')
+% imshow(flash , [],'InitialMagnification', 'fit')
 % figure;
-% imshow(noflash_small , [],'InitialMagnification', 'fit')
+% imshow(noflash , [],'InitialMagnification', 'fit')
 
 
 sigma_s = 8; %24 förut men det blev tungt 
 sigma_r = 0.4; %Intensitet
 
-filtered = zeros(size(noflash_small));
+filtered = zeros(size(noflash));
 
 radius = ceil(3*sigma_s);
 
@@ -44,8 +45,8 @@ spatialWeight = exp(-(X.^2 + Y.^2)/(2*sigma_s^2));
 
 for c = 1:3
 
-    A = noflash_small(:,:,c);
-    F = flash_small(:,:,c);
+    A = noflash(:,:,c);
+    F = flash(:,:,c);
 
     for y = 1+radius : size(A,1)-radius
         for x = 1+radius : size(A,2)-radius
@@ -73,8 +74,8 @@ title("Joint bilateral filter");
 
 %Shadow mask------------------------------------
 %Approximately linearize för shadow!
-flash_linear = flash_small .^ 2.2;
-ambient_linear = noflash_small .^ 2.2;
+flash_linear = flash .^ 2.2;
+ambient_linear = noflash .^ 2.2;
 
 %Calculate luminance: 
 flash_lum = 0.2126 * flash_linear(:,:,1) + ...
@@ -109,9 +110,9 @@ title("Cleaned Flash Shadow Mask");
 %Detect flash specularities
 % Luminance from original flash image for specularity detection
 
-flash_lum_original = 0.2126 * flash_small(:,:,1) + ...
-                     0.7152 * flash_small(:,:,2) + ...
-                     0.0722 * flash_small(:,:,3);
+flash_lum_original = 0.2126 * flash(:,:,1) + ...
+                     0.7152 * flash(:,:,2) + ...
+                     0.0722 * flash(:,:,3);
 
 specular_mask = flash_lum >= 0.95;
 figure;
@@ -151,9 +152,9 @@ r = 0.05; %DegreeOfSmoothing (ungefär σr)
 %Ratio: describes the relative local detail
 epsilon = 0.02;
 
-flash_base = imbilatfilt(flash_small, r, d);
+flash_base = imbilatfilt(flash, r, d);
 
-flash_detail = (flash_small + epsilon) ./ (flash_base + epsilon);
+flash_detail = (flash + epsilon) ./ (flash_base + epsilon);
 
 
 %Lägg på no-flash bilden: multiply
@@ -170,3 +171,6 @@ result = min(max(result, 0), 1); % Keep values in valid range
 figure;
 imshow(result,[],'InitialMagnification', 'fit'); 
 title("Flash/no-flash with detail transfer");
+%% scores 
+
+evaluate_image_quality(result);
