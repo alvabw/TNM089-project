@@ -1,32 +1,32 @@
 % Struktur: 
 % 1. denoising av no flash using joint bilateral filters
 % 2. Specular/shadow masks
-% 3.Detail transfer av flash
-% 4. Add masks and result
+% 3. Add masks and result
+% 4.Detail transfer
 %% Load images
 %No flash
-A = imread("./flashnoflash/puppets_01_noflash.tif");
+% A = imread("./flashnoflash/puppets_01_noflash.tif");
+A = imread("./flashnoflash/cave01_01_noflash.tif");
 figure
 imshow(A, [],'InitialMagnification', 'fit')
 title("Input Image - Camera Flash off")
 
 %Flash
-G = imread("./flashnoflash/puppets_00_flash.tif");
+% G = imread("./flashnoflash/puppets_00_flash.tif");
+G = imread("./flashnoflash/cave01_00_flash.tif");
 figure
 imshow(G, [],'InitialMagnification', 'fit')
 title("Guidance Image - Camera Flash On")
 
-%0-255 till 0-1: 
+%% 0-255 till 0-1: 
 flash = im2double(G);
 noflash = im2double(A);
 
-%% Denoising using joint bilateral av noflash
-% no flash filtreras, men flash används som guide förkanter
-
-%Börjar testa med mindre bilderna
+%Började testa med mindre bilderna
 % flash_small = imresize(flash, 0.25);
 % noflash_small = imresize(noflash, 0.25);
 
+%använd hela bilderna OBS namnet är bara inte bytt sen!
 flash_small = flash; 
 noflash_small = noflash; 
 
@@ -34,10 +34,10 @@ figure;
 imshow(flash_small , [],'InitialMagnification', 'fit')
 figure;
 imshow(noflash_small , [],'InitialMagnification', 'fit')
-%%
-%s= 2 och r = 0.3 var bra!!!!!
-sigma_s = 5; el
-sigma_r = 0.3; %Intensitet
+%% Denoising using joint bilateral av noflash
+% no flash filtreras, men flash används som guide förkanter
+sigma_s = 4.5; 
+sigma_r = 0.2; %Intensitet
 
 filtered = zeros(size(noflash_small));
 
@@ -73,30 +73,22 @@ figure;
 imshow(filtered, [],'InitialMagnification', 'fit');
 title("Joint bilateral filter");
 
-%% Specular/shadow masks (4.3)
+%% Shadow mask(4.3)
 %Approximately linearize för shadow!
 flash_linear = rgb2lin(flash_small);
 ambient_linear = rgb2lin(noflash_small);
 
-%Calculate luminance: 
+%Calculate luminance: viktad summa av RGB-kanalerna 
 flash_lum = 0.2126 * flash_linear(:,:,1) + ...
             0.7152 * flash_linear(:,:,2) + ...
             0.0722 * flash_linear(:,:,3);
 
-ambient_lum = 0.2126 * ambient_linear(:,:,1) + ...
+no_flash_lum = 0.2126 * ambient_linear(:,:,1) + ...
              0.7152 * ambient_linear(:,:,2) + ...
              0.0722 * ambient_linear(:,:,3);
 
-%Ambient lum map: ------------------------------
-figure;
-whos ambient_lum
-imagesc(ambient_lum);
-axis image;
-colorbar;
-title("Ambient Illumination Map");
-
 %Difference map flash/no flash --------------------------------
-difference_map = flash_lum - ambient_lum;
+difference_map = flash_lum - no_flash_lum;
 
 figure;
 imagesc(difference_map);
@@ -105,12 +97,8 @@ colorbar;
 title("Flash vs No-Flash Difference Map");
 
 %Detect flash shadows--------------------------------
-%shadow_threshold = 0.05;
-%shadow_mask = abs(flash_lum - ambient_lum) <= shadow_threshold;
-
-%Ny typ av shadow mask, vad är skillnaden?
-shadow_threshold = -0.02;
-shadow_mask = difference_map < shadow_threshold;
+shadow_threshold = 0.02;
+shadow_mask = difference_map <= shadow_threshold;
 
 figure;
 imshow(shadow_mask, [],'InitialMagnification', 'fit');
@@ -127,33 +115,19 @@ figure;
 imshow(shadow_mask, [],'InitialMagnification', 'fit');
 title("Cleaned Flash Shadow Mask");
 
-
-%% Specular mask-----------------------------------------------
-%Detect flash specularities
-% Luminance from original flash image for specularity detection
-
+%% Specular mask
+% pure flash/flash intesnsity: visualisering från icke linajriserade bilden
 flash_lum_original = 0.2126 * flash_small(:,:,1) + ...
                      0.7152 * flash_small(:,:,2) + ...
                      0.0722 * flash_small(:,:,3);
-
-%pure flash/flash intesnsity:--------------------------------
 figure;
 imagesc(flash_lum_original);
 axis image;
 colorbar;
 title("Pure Flash / Flash Intensity Map");
-%% --------------------------------
-%specular_mask = flash_lum >= 0.70;
-
-flash_lum_srgb = 0.2126 * flash_small(:,:,1) + ...
-                 0.7152 * flash_small(:,:,2) + ...
-                 0.0722 * flash_small(:,:,3);
-
-specular_mask = flash_lum_srgb >= 0.60;
-
-figure;
-imshow(specular_mask,  [],'InitialMagnification', 'fit');
-title("Initial Flash Specular Mask");
+%-------------------------------------------------------------
+specular_threshold = 0.95;
+specular_mask = flash_lum >= specular_threshold;
 
 %clean specular
 se = strel('disk', 1);
@@ -165,8 +139,8 @@ figure;
 imshow(specular_mask,   [],'InitialMagnification', 'fit');
 title("Cleaned Flash Specular Mask");
 
-%% Combine the two masks:------------------------------------------------
-M = shadow_mask | specular_mask;
+%% Combine the two masks:
+M = shadow_mask | specular_mask;%pixel markeras om den tillhör antingen skuggmasken eller specularmasken.
 
 figure;
 imshow(M,   [],'InitialMagnification', 'fit');
@@ -174,22 +148,20 @@ title("Combined Flash Artifact Mask");
 
 % Blurr the mask:Final artifact mask 
 M = imgaussfilt(double(M), 1);
-%Now instead of just 0 or 1, the mask contains values between 0 and 1 around the boundaries.
+%instead of just 0 or 1, the mask contains values between 0 and 1 around the boundaries.
 
 figure;
 imshow(M, [],'InitialMagnification', 'fit');
 title("Final Feathered Mask");
 
-
-%% Detail trasnfer (4.2)
+%% Detail transfer (4.2)
 d = 12; %SpatialSigma (σs)
 r = 0.01; 
 
 %Ratio: describes the relative local det ail
 epsilon = 0.02;
 
-flash_base = imbilatfilt(flash_small, r, d);
-
+flash_base = imbilatfilt(flash_small, r, d); %utjämnad basbild
 flash_detail = (flash_small + epsilon) ./ (flash_base + epsilon);
 
 %Flash detail/quotent map:------------------------
@@ -198,29 +170,29 @@ imagesc(mean(flash_detail, 3));
 axis image;
 colorbar;
 title("Flash Detail / Quotient Map");
-%--------------------------------
-%Lägg på no-flash bilden: multiply
-% 3. Transfer flash detail to filtered ambient image
+%---------------------------------------------------
+%Lägg på no-flash bilden: Transfer flash detail to filtered ambient image
 detail_strength = 1.75;
-
 transferred = filtered .*(1 + detail_strength * (flash_detail - 1));
 
-% 4. Lägg på makserna
-result = (1 - M) .* transferred + M .* filtered;
+% Lägg på makserna
+% Ordinary bilateral-filtered no-flash image (fallback)
+ambient_base = imbilatfilt(noflash_small, r, d);
 
-result = min(max(result, 0), 1); % Keep values in valid range
+%Final result
+result = (1 - M) .* transferred + M .* ambient_base;
+result = min(max(result, 0), 1);
 
 figure;
 imshow(result,[],'InitialMagnification', 'fit'); 
 title("Flash/no-flash with detail transfer");
 evaluate_image_quality(result); 
 
-% Kvalitetsmått: 
+% Kvalitetsmått:-----------------------------------------------------
 function [b_score, n_score, p_score] = evaluate_image_quality(img)
     % EVALUATE_IMAGE_QUALITY Beräknar BRISQUE, NIQE och PIQE samt skriver ut en rapport.
     %   skriv: evaluate_image_quality(result); 
  
-
     b_score = brisque(img); %statistik
     n_score = niqe(img); %hur naturlig bild ser ut
     p_score = piqe(img); %supervised, blockbaserade 
